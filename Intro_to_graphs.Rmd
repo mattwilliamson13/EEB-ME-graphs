@@ -1,0 +1,36 @@
+---
+title: "Building spatial graphs in R"
+author: "Matt Williamson"
+date: "2022-03-30"
+output: html_document
+---
+   
+## Graphs and wildlife connectivity
+
+Connectivity describes the degree to which the landscape allows for the movement of genes, individuals, or species to traverse the landscape in order to access resources, find mates, or avoid mortality. As habitats have become increasingly fragmented, conservation practitioners are increasingly focused on developing strategies for maintaining or restoring connectivity between existing habitats or protected areas. Although high resolution telemetry data coupled with various step-selection functions can tell us something about how individuals use the landscape during their daily or seasonal movements, the ability to scale those individual movements to the population- or species-levels or longer temporal scales often requires different approaches. As we discussed, graph theory (or the closely related network or circuit theory) is frequently used as a means of assessing landscape connectivity. The bulk of graph/network analyses in `R` rely on the [`igraph`](https://igraph.org/r/) package (or wrappers that point to functions from `igraph` like [`tidygraph`](https://www.data-imaginist.com/2017/introducing-tidygraph/)). Getting started with spatial graphs is challenging because:
+
+* The number of metrics describing graphs can be overwheliming
+* There are __always__ multiple ways to do things in `R`
+
+With those caveats in mind, I hope that by the end of working through this example you will be able to:
+* Use georeferenced data to construct simple graphs where edges are based on distance
+* Estimate and/or visualize a variety of the metrics described in Rayfield et al. 2016 
+* Implement edge thinning and node removal to understand how loss of patches or edges alter the network structure (sensu Urban and Keitt 2001)
+
+```{r eval=FALSE}
+if(!"remotes" %in% installed.packages()) {
+  install.packages("remotes")
+}
+
+cran_pkgs = c(
+  "sf",
+  "tidygraph",
+  "igraph")
+
+remotes::install_cran(cran_pkgs)
+
+
+```
+
+## Set Up Your Project and Load Libraries
+
