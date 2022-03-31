@@ -21,16 +21,102 @@ With those caveats in mind, I hope that by the end of working through this examp
 if(!"remotes" %in% installed.packages()) {
   install.packages("remotes")
 }
+#this code checks if remotes is installed and installs it if not
 
 cran_pkgs = c(
   "sf",
   "tidygraph",
-  "igraph")
+  "igraph",
+  "here",
+  "tmap",
+  "units",
+  "ggraph",
+  "netrankr")
 
 remotes::install_cran(cran_pkgs)
+#remotes install_cran only installs if the packages don't exist or if they need updating
 
 
 ```
 
-## Set Up Your Project and Load Libraries
+## Load your libraries and then some data
 
+We'll need a few different libraries to be able to bring in spatial data and then convert it into a graph form, so we'll load those here. Remember that `?` followed by the package name can help you access the different helpfiles for each function in the package. Since you all work on things that fly, I thought we'd start by using a dataset on birds. We'll use the 2015 Priority Areas for Conservation (PACs) for the Greater Sage Grouse. PACs represent areas identified as essential for the long-term conservation of the sage-grouse (you can learn more about this dataset [here](https://databasin.org/datasets/88fd5a2706d9443a838f84be1a593ff2/). As such, we might imagine that connectivity among these PACs is also important making them a reasonable choice for our analysis.
+
+```{r loadlibdat}
+library(sf)
+library(igraph)
+library(tidygraph)
+library(tmap)
+library(units)
+library(ggraph)
+
+sg.pacs <- st_read(here::here("data/GRSG_2015_USFWS_StatusReview_PACs.shp")) %>% 
+  st_make_valid()
+tmap::tmap_mode("view")
+tmap::qtm(sg.pacs, basemaps = leaflet::providers$Stamen.TerrainBackground)
+```
+
+
+If you take a look at the attribute table you'll notice that the shapefile contains information on the sage grouse population associated with each PAC, the broader USFWS managament zones, and the number of acres associated with each PAC. You can see that here:
+```{r inspectdata}
+
+head(sg.pacs[,1:9]) #omit the geometry column as we are only interested in the tabular elements here
+```
+
+## Making the data ready for igraph
+
+There are a variety of ways to deal with polygons in network applications (see the `sfnetworks` package), but their value lies primarily in the ease of moving between network diagrams and maps. For the sake of keeping things simple, we're going to convert these polygons into points using `st_centroid`. Ecologically we might argue that we are most interested in the ability of a sage grouse to make it to the center of the PACs as that should be the point furtheset from the 'edge' habitat. We'll do that here. Note that you get a warning about assuming the attributes are constant over geometries - we want that here because we want to maintain the acreage values (even though points don't have area).
+
+```{r paccentroid}
+
+sg.pacs.cent <- sg.pacs %>% 
+  filter(., MgmtZone == "MZ3") %>% 
+  st_centroid(sg.pacs, of_largest_polygon = TRUE) #we use this to ensure that the point lands in the largest chunk of the PAC if it is a multipolygon
+```
+### Building an adjacency matrix
+
+```{r distmat}
+
+sg.pacs.dist <- st_distance(sg.pacs.cent)
+threshold <- units::as_units(50000, "m")
+adj.mtx <- sg.pacs.dist < threshold
+
+
+adj.mtx <- adj.mtx *1
+diag(adj.mtx) <- 0
+dimnames(adj.mtx) <- list(sg.pacs.cent$UniqueID, sg.pacs.cent$UniqueID)
+
+sg.graph <- as_tbl_graph(adj.mtx, directed = FALSE, nodes = st_drop_geometry(sg.pacs.dist), node_key = "UniqueID") %>% left_join(., sg.pacs.cent, by = c("name" = "UniqueID"))
+
+ggraph(sg.graph, 'kk') + 
+    geom_edge_fan(aes(alpha = stat(index)), show.legend = FALSE) + 
+    geom_node_point(aes(size = log(Acres,10), color=Population)) + 
+    theme_graph(foreground = 'steelblue', fg_text_colour = 'white')
+```
+
+### Calculating some metrics
+
+```{r metrics}
+
+sg.graph.mets <- sg.graph %>% 
+  mutate(., bet.centrality = centrality_betweenness(),
+            close.centrality = centrality_closeness_harmonic(),
+            deg = degree(.))
+
+ggraph(sg.graph.mets, 'kk') + 
+    geom_edge_fan(aes(alpha = stat(index)), show.legend = FALSE) + 
+    geom_node_point(aes(size = bet.centrality, color=Population)) + 
+    theme_graph(foreground = 'steelblue', fg_text_colour = 'white')
+
+ggraph(sg.graph.mets, 'kk') + 
+    geom_edge_fan(aes(alpha = stat(index)), show.legend = FALSE) + 
+    geom_node_point(aes(size = close.centrality, color=Population)) + 
+    theme_graph(foreground = 'steelblue', fg_text_colour = 'white')
+
+ggraph(sg.graph.mets, 'kk') + 
+    geom_edge_fan(aes(alpha = stat(index)), show.legend = FALSE) + 
+    geom_node_point(aes(size = deg, color=Population)) + 
+    theme_graph(foreground = 'steelblue', fg_text_colour = 'white')
+
+```
