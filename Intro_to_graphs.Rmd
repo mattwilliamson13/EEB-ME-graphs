@@ -128,7 +128,7 @@ ggraph(sg.graph.mets, 'kk') +
     geom_node_point(aes(size = deg, color=Population)) + 
     theme_graph(foreground = 'steelblue', fg_text_colour = 'white')
 ```
-### Calulate some higher-order metrics
+### Calculate some higher-order metrics
 
 Components are a means of describing the clustering of connected elements in a network. Components with single node memberships are generally disconneced whereas components with large numbers of members are generally well connected. We can identify the components of the graph and understand their composition using:
 
@@ -147,10 +147,17 @@ mean(degree(sg.graph))
 sd(degree(sg.graph))
 ```
 
+### Now your turn
+
+Calculate the same metrics for the other management zones. 
+* What is the maximum betweeness centrality for each zone
+* How many componets are there in each of the other zones and how big is the biggest?
+* How does the degree distribution compare across the other zones
 
 ## Experimenting
 As we discussed, we might be interested in understanding how changes in the network ultimately affect connectivity. We can do this a few ways. One way might be to alter the distance we use as a threshold and look at how the different metrics change. We'll attempt to use a function to do this.
 
 ```{r disthresh}
+
 
 ```
