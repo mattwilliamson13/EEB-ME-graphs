@@ -95,14 +95,23 @@ ggraph(sg.graph, 'kk') +
     theme_graph(foreground = 'steelblue', fg_text_colour = 'white')
 ```
 
-### Calculating some metrics
+### Calculating element metrics
+
+We can use `tidygraphs` to calculate some of the metrics from the Rayfield et al. paper while leveraging the `tidyverse` and `dplyr` verbs. For example, we can calculate several of the 'element' level measures (e.g., betweeness centrality (based on the number of paths that traverse the network passing through the node), closeness centrality (based on the length of the shortest paths passing through the node), degree (based on the number of connections the node has)) like so:
 
 ```{r metrics}
 
 sg.graph.mets <- sg.graph %>% 
+  activate(nodes) %>% 
   mutate(., bet.centrality = centrality_betweenness(),
             close.centrality = centrality_closeness_harmonic(),
             deg = degree(.))
+
+
+```
+
+We can plot those and look at how they change our perspective of the network using:
+```{r plotmets}
 
 ggraph(sg.graph.mets, 'kk') + 
     geom_edge_fan(aes(alpha = stat(index)), show.legend = FALSE) + 
@@ -118,5 +127,30 @@ ggraph(sg.graph.mets, 'kk') +
     geom_edge_fan(aes(alpha = stat(index)), show.legend = FALSE) + 
     geom_node_point(aes(size = deg, color=Population)) + 
     theme_graph(foreground = 'steelblue', fg_text_colour = 'white')
+```
+### Calulate some higher-order metrics
+
+Components are a means of describing the clustering of connected elements in a network. Components with single node memberships are generally disconneced whereas components with large numbers of members are generally well connected. We can identify the components of the graph and understand their composition using:
+
+```{r compmets}
+comps <- components(sg.graph)
+comps$csize
+comps$membership
+
+```
+
+As we discussed, the degree distribution can tell us something about the 'vulnerability' of network. We can plot the degree distribution and generate some summary statistics using:
+
+```{r netmets}
+hist(degree(sg.graph))
+mean(degree(sg.graph))
+sd(degree(sg.graph))
+```
+
+
+## Experimenting
+As we discussed, we might be interested in understanding how changes in the network ultimately affect connectivity. We can do this a few ways. One way might be to alter the distance we use as a threshold and look at how the different metrics change. We'll attempt to use a function to do this.
+
+```{r disthresh}
 
 ```
