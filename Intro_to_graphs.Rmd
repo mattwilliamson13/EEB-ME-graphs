@@ -196,6 +196,7 @@ thresh.df <- data.frame(thresh.dist = rep(NA, length(thresholds)),
                         mean.deg = rep(NA, length(thresholds))                    )
 sg.pacs.cent <- sg.pacs %>% 
   st_centroid(sg.pacs, of_largest_polygon = TRUE) 
+sg.pacs.dist <- st_distance(sg.pacs.cent)
 
 for (i in 1:length(thresholds)){
   adj.mtx <- sg.pacs.dist < thresholds[i]
@@ -216,7 +217,8 @@ thresh.long <- thresh.df %>%
 
 ggplot(data = thresh.long, aes(x= thresh.dist, y = estimate)) +
   geom_line()+
-  facet_wrap(vars(metric))
+  facet_wrap(vars(metric)) +
+  ggtitle("Whole Network")
 
 
 ```
@@ -226,7 +228,7 @@ ggplot(data = thresh.long, aes(x= thresh.dist, y = estimate)) +
 All of the metrics treated distances between connected nodes equally  (i.e., there is no edge weight, things are either connected or otherwise). In the articles we've read these past few days, we've seen a variety of efforts to develop models of landscape connecgtivity (or long-term animal movement) that leverage the computational efficiency of graph theory while attempting to reflect the ecological process more realistically (and in a way that is spatially explicit). Resistance (or friction) surfaces are at the core of these methods and depict the energetic costs (or mortality risks) of moving across the landscape. We'll step through that process here.
 
 ### Developing a resistance surface
-For the sake of computational efficiency, we are going to use the PACs from the Columbia Plateau in WA (i.e., MZ6). We're also only going to use 1 potential source of resistance: topographic ruggedness. The primary goal here is to illustrate how you go from a raster dataset to a resistance surface. In an ideal world, you have the results of a step selection function analysis that will inform the exact relationship between the predictor (depicted as a raster) and resistance, but we may not always have that or we may be uncertain about what functional form the relationship might take. Here we calculate the topographic ruggedness, try 3 different functional forms, and confert the data into a transition layer that the `gdistance` package can use for a variety of different analyses. Note that `gdistance` uses transition layers that are built on conductance (the inverse of resistance) so we need to invert our resistance surface once we've built it.
+For the sake of computational efficiency, we are going to use the PACs from the Columbia Plateau in WA (i.e., MZ6). We're also only going to use 1 potential source of resistance: topographic ruggedness. The primary goal here is to illustrate how you go from a raster dataset to a resistance surface. In an ideal world, you have the results of a step selection function analysis that will inform the exact relationship between the predictor (depicted as a raster) and resistance, but we may not always have that or we may be uncertain about what functional form the relationship might take. Here we calculate the topographic ruggedness, try 3 different functional forms, and convert the data into a transition layer that the `gdistance` package can use for a variety of different analyses. 
 
 ```{r resistsurf}
 sg.pacs.cent <- sg.pacs %>% 
@@ -235,13 +237,20 @@ sg.pacs.cent <- sg.pacs %>%
 
 elev <- get_ned(as(sg.pacs.cent, "Spatial"), "MZ6")
 tri <- terrain(elev, opt="TRI")
-tri.agg <- aggregate(tri, fact = 100, fun=max)
-tri.exp.up.resist <- (1 + tri)^5
-plot(tri, tri.exp.up.resist)
+tri.agg <- aggregate(tri, fact = 20, fun=max) #change this
 
-tri.exp.dn.resist <- (1 + tri)^.5
-plot(tri, tri.exp.dn.resist)
+#create a concave up functional form - the size of the exponent controls when the 'take-off' happens and how steeply
+tri.exp.up.resist <- (1 + tri.agg)^5
+plot(tri.agg, tri.exp.up.resist)
 
+#create a concave down functional form, the smaller the decimal, the quicker you reach the asymptote
+tri.exp.dn.resist <- (1 + tri.agg)^.01
+plot(tri.agg, tri.exp.dn.resist)
+```
+
+Note that `gdistance` uses transition layers that are built on conductance (the inverse of resistance) so we need to invert our resistance surface once we've built it. It also requires a special object called a `TransitionLayer`. We accomplish both of those in the call to `transition` below.
+
+```{r prepforgdist}
 exp.dn.trans <- transition(tri.exp.dn.resist, function(x) 1/mean(x), directions=8)
 
 ```
