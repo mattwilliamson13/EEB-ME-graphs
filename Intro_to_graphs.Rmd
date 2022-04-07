@@ -10,11 +10,15 @@ output: html_document
 Connectivity describes the degree to which the landscape allows for the movement of genes, individuals, or species to traverse the landscape in order to access resources, find mates, or avoid mortality. As habitats have become increasingly fragmented, conservation practitioners are increasingly focused on developing strategies for maintaining or restoring connectivity between existing habitats or protected areas. Although high resolution telemetry data coupled with various step-selection functions can tell us something about how individuals use the landscape during their daily or seasonal movements, the ability to scale those individual movements to the population- or species-levels or longer temporal scales often requires different approaches. As we discussed, graph theory (or the closely related network or circuit theory) is frequently used as a means of assessing landscape connectivity. The bulk of graph/network analyses in `R` rely on the [`igraph`](https://igraph.org/r/) package (or wrappers that point to functions from `igraph` like [`tidygraph`](https://www.data-imaginist.com/2017/introducing-tidygraph/)). Getting started with spatial graphs is challenging because:
 
 * The number of metrics describing graphs can be overwheliming
+
 * There are __always__ multiple ways to do things in `R`
 
 With those caveats in mind, I hope that by the end of working through this example you will be able to:
+
 * Use georeferenced data to construct simple graphs where edges are based on distance
+
 * Estimate and/or visualize a variety of the metrics described in Rayfield et al. 2016 
+
 * Implement edge thinning and node removal to understand how loss of patches or edges alter the network structure (sensu Urban and Keitt 2001)
 
 ```{r eval=FALSE}
@@ -31,7 +35,10 @@ cran_pkgs = c(
   "tmap",
   "units",
   "ggraph",
-  "netrankr")
+  "netrankr",
+  "raster",
+  "gdistance",
+  "tidyr")
 
 remotes::install_cran(cran_pkgs)
 #remotes install_cran only installs if the packages don't exist or if they need updating
@@ -50,7 +57,9 @@ library(tidygraph)
 library(tmap)
 library(units)
 library(ggraph)
-
+library(raster)
+library(gdistance)
+library(tidyr)
 sg.pacs <- st_read(here::here("data/GRSG_2015_USFWS_StatusReview_PACs.shp")) %>% 
   st_make_valid()
 tmap::tmap_mode("view")
@@ -59,6 +68,7 @@ tmap::qtm(sg.pacs, basemaps = leaflet::providers$Stamen.TerrainBackground)
 
 
 If you take a look at the attribute table you'll notice that the shapefile contains information on the sage grouse population associated with each PAC, the broader USFWS managament zones, and the number of acres associated with each PAC. You can see that here:
+
 ```{r inspectdata}
 
 head(sg.pacs[,1:9]) #omit the geometry column as we are only interested in the tabular elements here
@@ -66,7 +76,7 @@ head(sg.pacs[,1:9]) #omit the geometry column as we are only interested in the t
 
 ## Making the data ready for igraph
 
-There are a variety of ways to deal with polygons in network applications (see the `sfnetworks` package), but their value lies primarily in the ease of moving between network diagrams and maps. For the sake of keeping things simple, we're going to convert these polygons into points using `st_centroid`. Ecologically we might argue that we are most interested in the ability of a sage grouse to make it to the center of the PACs as that should be the point furtheset from the 'edge' habitat. We'll do that here. Note that you get a warning about assuming the attributes are constant over geometries - we want that here because we want to maintain the acreage values (even though points don't have area).
+There are a variety of ways to deal with polygons in network applications (see the `sfnetworks` package), but their value lies primarily in the ease of moving between network diagrams and maps. For the sake of keeping things simple, we're going to convert these polygons into points using `st_centroid`. Ecologically we might argue that we are most interested in the ability of a sage grouse to make it to the center of the PACs as that should be the point furtheset from the 'edge' habitat. We'll do that here. Note that you get a warning about assuming the attributes are constant over geometries - we want that here because we want to maintain the acreage values (even though points don't have area). Also note, that I am using the `filter` command to split the dataset to facilitate speed of analysis and visualization. 
 
 ```{r paccentroid}
 
@@ -74,21 +84,30 @@ sg.pacs.cent <- sg.pacs %>%
   filter(., MgmtZone == "MZ3") %>% 
   st_centroid(sg.pacs, of_largest_polygon = TRUE) #we use this to ensure that the point lands in the largest chunk of the PAC if it is a multipolygon
 ```
+
 ### Building an adjacency matrix
+
+The ability to treat these different PACs as a network relies on defining connections between them. We can do this by defining them _a priori_ using an edge list (see the `?igraph::graph_from_edgelist` help file to learn more about this), but that can be extremely tedious for large networks. An alternative approach is to use an *adjacency matrix* - a matrix with the number of rows and columns equal to the number of nodes in our network. In an *unweighted network* this adjacency matrix has "1s" in each cell where the node pairs (the row and column) are connected and "0's" in all other cells. This, of course, raises the question of how we decide whether two nodes are connected?
+
+For ecologically oriented analyses, one fairly straightforward assumption we might make is to base adjacency on some form of ecologically relevant distance (like maximum dispersal distance, average daily distance traveled). We do this by first estimating all of the pairwise distances between nodes (using `sf::st_distance`) and then using a conditional statement to identify which node-pairs fall within the distance threshold. Once we have our adjacency matrix, we can convert it to a graph object using `tidygraph::as_tbl_graph` and join the attributes using `dplyr::left_join`.
 
 ```{r distmat}
 
-sg.pacs.dist <- st_distance(sg.pacs.cent)
-threshold <- units::as_units(50000, "m")
-adj.mtx <- sg.pacs.dist < threshold
+sg.pacs.dist <- st_distance(sg.pacs.cent) #returns a matrix of all pairwise distances with units based on the CRS of the dataset
+
+threshold <- units::as_units(50, "km") #using the units package to specify the distance threshold with units
+
+adj.mtx <- sg.pacs.dist < threshold #returns a matrix of TRUE/FALSE
 
 
-adj.mtx <- adj.mtx *1
-diag(adj.mtx) <- 0
-dimnames(adj.mtx) <- list(sg.pacs.cent$UniqueID, sg.pacs.cent$UniqueID)
+adj.mtx <- adj.mtx *1 #R trick for converting TRUE/FALSE matrix into 0,1 matrix
+diag(adj.mtx) <- 0 #the diagonal in adjacency matrix is the "self" connections which we set to 0 because we aren't interested in single site connections
+
+dimnames(adj.mtx) <- list(sg.pacs.cent$UniqueID, sg.pacs.cent$UniqueID) #necessary to allow the joining of node 'attributes' to the adjacency matrix
 
 sg.graph <- as_tbl_graph(adj.mtx, directed = FALSE, nodes = st_drop_geometry(sg.pacs.dist), node_key = "UniqueID") %>% left_join(., sg.pacs.cent, by = c("name" = "UniqueID"))
 
+#Now let's take a look at the resulting graph
 ggraph(sg.graph, 'kk') + 
     geom_edge_fan(aes(alpha = stat(index)), show.legend = FALSE) + 
     geom_node_point(aes(size = log(Acres,10), color=Population)) + 
@@ -97,7 +116,15 @@ ggraph(sg.graph, 'kk') +
 
 ### Calculating element metrics
 
-We can use `tidygraphs` to calculate some of the metrics from the Rayfield et al. paper while leveraging the `tidyverse` and `dplyr` verbs. For example, we can calculate several of the 'element' level measures (e.g., betweeness centrality (based on the number of paths that traverse the network passing through the node), closeness centrality (based on the length of the shortest paths passing through the node), degree (based on the number of connections the node has)) like so:
+We can use `tidygraphs` to calculate some of the metrics from the Rayfield et al. paper while leveraging the `tidyverse` and `dplyr` verbs. For example, we can calculate several of the 'element' level measures like:
+
+* **Betweenness Centrality**: In a connected graph, there is at least one shortest (there can be more if there multiple, equivalent paths) path connecting every pair of nodes in that network. Betweenness centrality for a given node is the sum of all of the shortest paths that flow through that node.
+
+* **Closeness Centrality** is similar to betweenness centrality, but instead of counting the number of paths through the node, it is based on the total length of the shortest paths through a given node.
+
+* **Degree** reflects the number of connections a node has to other nodes. High values of degree tend to correspond with well-connected nodes (e.g., habitats that are often used as stepping stones) while nodes with low degree values are often isolated or terminal.
+
+In practice, many of these metrics (centralities, degree, etc) are correlated, but tell you slightly different things about the ecological process of interest. So you may want think carefully about how many of these you want to calculate.
 
 ```{r metrics}
 
@@ -110,7 +137,8 @@ sg.graph.mets <- sg.graph %>%
 
 ```
 
-We can plot those and look at how they change our perspective of the network using:
+We can plot those and look at how they change our perspective of the network by using these new attributes as part of our aesthetics (defined using `aes`, just like in `ggplot2`). You'll notice similar the resulting graphs look when visualized using the different metrics we just calculated (because they are correlated) and how different the graph looks compared to when we made the node size a function of the geographic area.
+
 ```{r plotmets}
 
 ggraph(sg.graph.mets, 'kk') + 
@@ -128,9 +156,10 @@ ggraph(sg.graph.mets, 'kk') +
     geom_node_point(aes(size = deg, color=Population)) + 
     theme_graph(foreground = 'steelblue', fg_text_colour = 'white')
 ```
+
 ### Calculate some higher-order metrics
 
-Components are a means of describing the clustering of connected elements in a network. Components with single node memberships are generally disconneced whereas components with large numbers of members are generally well connected. We can identify the components of the graph and understand their composition using:
+A **component** of a graph is a set of nodes (or a single node) that may be connected to each other, but are otherwise disconnected from the rest of the network. Metrics that describe components are a means of describing the clustering of connected elements in a network. Components with single node memberships are generally disconnected whereas components with large numbers of members are generally well connected. We can identify the components of the graph and understand their composition using:
 
 ```{r compmets}
 comps <- components(sg.graph)
@@ -139,7 +168,7 @@ comps$membership
 
 ```
 
-As we discussed, the degree distribution can tell us something about the 'vulnerability' of network. We can plot the degree distribution and generate some summary statistics using:
+The **Degree distribution** can tell us something about the 'vulnerability' of network. We can plot the degree distribution and generate some summary statistics using:
 
 ```{r netmets}
 hist(degree(sg.graph))
@@ -155,9 +184,67 @@ Calculate the same metrics for the other management zones.
 * How does the degree distribution compare across the other zones
 
 ## Experimenting
-As we discussed, we might be interested in understanding how changes in the network ultimately affect connectivity. We can do this a few ways. One way might be to alter the distance we use as a threshold and look at how the different metrics change. We'll attempt to use a function to do this.
+As we discussed, we might be interested in understanding how changes in the network ultimately affect connectivity. We can do this a few ways. One way might be to alter the distance we use as a threshold and look at how the different metrics change. We use a `for` loop below to recalculate the adjacency matrix based on a variety of distance thresholds.
 
 ```{r disthresh}
+thresholds <- as_units(c(1, 10,25, 50, 100, 150, 250, 500), "km")
+thresh.df <- data.frame(thresh.dist = rep(NA, length(thresholds)),
+                        mean.between = rep(NA, length(thresholds)),
+                        ncomps = rep(NA, length(thresholds)),
+                        mean.deg = rep(NA, length(thresholds))                    )
+sg.pacs.cent <- sg.pacs %>% 
+  st_centroid(sg.pacs, of_largest_polygon = TRUE) 
+
+for (i in 1:length(thresholds)){
+  adj.mtx <- sg.pacs.dist < thresholds[i]
+  adj.mtx <- adj.mtx *1
+  diag(adj.mtx) <- 0
+  dimnames(adj.mtx) <- list(sg.pacs.cent$UniqueID, sg.pacs.cent$UniqueID)
+  sg.graph <- as_tbl_graph(adj.mtx, directed = FALSE, nodes = st_drop_geometry(sg.pacs.dist),
+                           node_key = "UniqueID") %>% 
+    left_join(., sg.pacs.cent, by = c("name" = "UniqueID"))
+  thresh.df$thresh.dist[i] <- thresholds[i]
+  thresh.df$mean.between[i] <- mean(betweenness(sg.graph, directed = FALSE))
+  thresh.df$ncomps[i] <- length(components(sg.graph)$csize)
+  thresh.df$mean.deg[i] <- mean(degree(sg.graph))
+}  
+
+thresh.long <- thresh.df %>% 
+  pivot_longer(!thresh.dist, names_to = "metric", values_to = "estimate")
+
+ggplot(data = thresh.long, aes(x= thresh.dist, y = estimate)) +
+  geom_line()+
+  facet_wrap(vars(metric))
 
 
 ```
+
+## Estimating landscape connectivity using resistance/friction surfaces
+
+All of the metrics treated distances between connected nodes equally  (i.e., there is no edge weight, things are either connected or otherwise). In the articles we've read these past few days, we've seen a variety of efforts to develop models of landscape connecgtivity (or long-term animal movement) that leverage the computational efficiency of graph theory while attempting to reflect the ecological process more realistically (and in a way that is spatially explicit). Resistance (or friction) surfaces are at the core of these methods and depict the energetic costs (or mortality risks) of moving across the landscape. We'll step through that process here.
+
+### Developing a resistance surface
+For the sake of computational efficiency, we are going to use the PACs from the Columbia Plateau in WA (i.e., MZ6). We're also only going to use 1 potential source of resistance: topographic ruggedness. The primary goal here is to illustrate how you go from a raster dataset to a resistance surface. In an ideal world, you have the results of a step selection function analysis that will inform the exact relationship between the predictor (depicted as a raster) and resistance, but we may not always have that or we may be uncertain about what functional form the relationship might take. Here we calculate the topographic ruggedness, try 3 different functional forms, and confert the data into a transition layer that the `gdistance` package can use for a variety of different analyses. Note that `gdistance` uses transition layers that are built on conductance (the inverse of resistance) so we need to invert our resistance surface once we've built it.
+
+```{r resistsurf}
+sg.pacs.cent <- sg.pacs %>% 
+  filter(., MgmtZone == "MZ6") %>% 
+  st_centroid(sg.pacs, of_largest_polygon = TRUE)
+
+elev <- get_ned(as(sg.pacs.cent, "Spatial"), "MZ6")
+tri <- terrain(elev, opt="TRI")
+tri.agg <- aggregate(tri, fact = 100, fun=max)
+tri.exp.up.resist <- (1 + tri)^5
+plot(tri, tri.exp.up.resist)
+
+tri.exp.dn.resist <- (1 + tri)^.5
+plot(tri, tri.exp.dn.resist)
+
+exp.dn.trans <- transition(tri.exp.dn.resist, function(x) 1/mean(x), directions=8)
+
+```
+
+### Estimating relevant distances
+
+
+### Running a connectivity model
