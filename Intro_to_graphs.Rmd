@@ -38,7 +38,8 @@ cran_pkgs = c(
   "netrankr",
   "raster",
   "gdistance",
-  "tidyr")
+  "tidyr",
+  "FedData")
 
 remotes::install_cran(cran_pkgs)
 #remotes install_cran only installs if the packages don't exist or if they need updating
@@ -60,6 +61,7 @@ library(ggraph)
 library(raster)
 library(gdistance)
 library(tidyr)
+library(FedData)
 sg.pacs <- st_read(here::here("data/GRSG_2015_USFWS_StatusReview_PACs.shp")) %>% 
   st_make_valid()
 tmap::tmap_mode("view")
