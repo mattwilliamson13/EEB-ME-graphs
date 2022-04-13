@@ -213,7 +213,7 @@ for (i in 1:length(thresholds)){
 }  
 
 thresh.long <- thresh.df %>% 
-  pivot_longer(!thresh.dist, names_to = "metric", values_to = "estimate")
+  tidyr::pivot_longer(!thresh.dist, names_to = "metric", values_to = "estimate")
 
 ggplot(data = thresh.long, aes(x= thresh.dist, y = estimate)) +
   geom_line()+
@@ -225,7 +225,7 @@ ggplot(data = thresh.long, aes(x= thresh.dist, y = estimate)) +
 
 ## Estimating landscape connectivity using resistance/friction surfaces
 
-All of the metrics treated distances between connected nodes equally  (i.e., there is no edge weight, things are either connected or otherwise). In the articles we've read these past few days, we've seen a variety of efforts to develop models of landscape connecgtivity (or long-term animal movement) that leverage the computational efficiency of graph theory while attempting to reflect the ecological process more realistically (and in a way that is spatially explicit). Resistance (or friction) surfaces are at the core of these methods and depict the energetic costs (or mortality risks) of moving across the landscape. We'll step through that process here.
+All of the metrics treated distances between connected nodes equally  (i.e., there is no edge weight, things are either connected or otherwise). In the articles we've read these past few days, we've seen a variety of efforts to develop models of landscape connectivity (or long-term animal movement) that leverage the computational efficiency of graph theory while attempting to reflect the ecological process more realistically (and in a way that is spatially explicit). Resistance (or friction) surfaces are at the core of these methods and depict the energetic costs (or mortality risks) of moving across the landscape. We'll step through that process here.
 
 ### Developing a resistance surface
 For the sake of computational efficiency, we are going to use the PACs from the Columbia Plateau in WA (i.e., MZ6). We're also only going to use 1 potential source of resistance: topographic ruggedness. The primary goal here is to illustrate how you go from a raster dataset to a resistance surface. In an ideal world, you have the results of a step selection function analysis that will inform the exact relationship between the predictor (depicted as a raster) and resistance, but we may not always have that or we may be uncertain about what functional form the relationship might take. Here we calculate the topographic ruggedness, try 3 different functional forms, and convert the data into a transition layer that the `gdistance` package can use for a variety of different analyses. 
@@ -237,18 +237,29 @@ sg.pacs.cent <- sg.pacs %>%
 
 elev <- get_ned(as(sg.pacs.cent, "Spatial"), "MZ6")
 tri <- terrain(elev, opt="TRI")
-tri.agg <- aggregate(tri, fact = 20, fun=max) #change this
+tri.agg <- aggregate(tri, fact = 20, fun=max) #aggregate to make life a little easier
+```
 
-#create a concave up functional form - the size of the exponent controls when the 'take-off' happens and how steeply
+*create a concave up functional form* 
+
+To create the concave up form that is usable for resistance modeling, we have to first add 1 to the entire surface. This is necessary because we have to invert the matrix to change resistance values to transition probabilities (i.e., we take 1/resistance matrix). In the places where TRI (or resistance, generally) is 0, this value is undefined so we add a 1 as a means of avoiding that affect without causing changes to the spatial juxtaposition of resistance values. Then, we raise that value to a power >1 where the size of the exponent determines where the "taking off" portion of the form occurs in the relation between TRI and resistance and how steeply the line rises after that point. _Try changing the exponent to get a sense for this_
+
+```{r conup}
 tri.exp.up.resist <- (1 + tri.agg)^5
 plot(tri.agg, tri.exp.up.resist)
+```
 
-#create a concave down functional form, the smaller the decimal, the quicker you reach the asymptote
-tri.exp.dn.resist <- (1 + tri.agg)^.01
+*create a concave down functional form*
+
+The concave-up functional form reflects a hypothesis that changes in TRI (or any variable contributing to resistance) has a relatively small effect on an animal's ability to traverse the landscape until you reach some 'threshold' at which point movement gets exponentially harder. The alternative view might be that above some minimal value of TRI, it gets substantially harder to move, but after that point there's little difference between higher values of TRI (or other resistance factors) and an animal's ability to move (i.e., there is an asymptotic relationship between the variable and the resistance value). To do this, we again add a 1 (to prevent undefined values), but this time we raise the value to a power <1. The smaller the number, the faster we reach the asymtote. 
+
+```{r condn}
+tri.exp.dn.resist <- (1 + tri.agg)^0.01
+
 plot(tri.agg, tri.exp.dn.resist)
 ```
 
-Note that `gdistance` uses transition layers that are built on conductance (the inverse of resistance) so we need to invert our resistance surface once we've built it. It also requires a special object called a `TransitionLayer`. We accomplish both of those in the call to `transition` below.
+Note that `gdistance` uses transition layers that are built on conductance (the inverse of resistance) so we need to invert our resistance surface once we've built it. It also requires a special object called a `TransitionLayer`. We accomplish both of those in the call to `transition` below. Finally, we have to make a geographic correction to correct for map distortions that arise from geographic (long/lat) projections combined with a grid that spans a large extent (because the cells change size as you move away from the equator) and/or with directions >4 (to deal with the fact that diagonal connections are longer than horizontal connections.). See`?gdistance::geoCorrection` for more information.
 
 ```{r prepforgdist}
 exp.dn.trans <- transition(tri.exp.dn.resist, function(x) 1/mean(x), directions=8)
@@ -257,5 +268,6 @@ exp.dn.trans <- transition(tri.exp.dn.resist, function(x) 1/mean(x), directions=
 
 ### Estimating relevant distances
 
+Now that we have 
 
 ### Running a connectivity model
